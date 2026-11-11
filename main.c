@@ -8,34 +8,10 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 //#endif
-
-
-void enviarMensaje(int puerto_destino,int mi_puerto,int tipo,int timestamp) {
-
-    int sock;
-    struct sockaddr_in direccion;
-    char mensaje[40];
-
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (sock == -1) {
-        printf("socket");
-        return ;
-    }
-
-    direccion.sin_family = AF_INET;
-    direccion.sin_port = htons(puerto_destino);
-    inet_pton(AF_INET, "127.0.0.1", &direccion.sin_addr);
-    if (connect(sock,(struct sockaddr *)&direccion,sizeof(direccion)) == -1) {
-        close(sock);
-        return ;
-    }
-    snprintf(mensaje,sizeof(mensaje),"%d&%d&%d\n",mi_puerto,tipo,timestamp);
-    send(sock, mensaje, strlen(mensaje), 0);
-    close(sock);
-}
+#include "servers.h"
 
 void *lowRichard(void *arg) {
+    
 
     int puerto = *(int *)arg;
     int socket_servidor;
@@ -189,127 +165,20 @@ void *lowRichard(void *arg) {
         }
     }
 }
-int server() {
 
-    int socket_servidor;
-    int socket_cliente;
-    int token =0;
-    int id;
-    struct sockaddr_in direccion_servidor;
-    struct sockaddr_in direccion_cliente;
+int main(int argc, char *argv[]) {
 
-    socklen_t tam_direccion_cliente;
-    char buffer[40];
-    //Crear socket
-    socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (socket_servidor == -1) {
-        printf("Error creando socket");
-        return 0;
+    char *id = argv[1];
+    int number = atoi(argv[2]);
+    if (id[0] == 'A') {
+        ejecutarCore(number);
     }
-
-    printf("Socket creado\n");
-    //Configurar la dirección del servidor
-    direccion_servidor.sin_family = AF_INET;
-    direccion_servidor.sin_addr.s_addr = INADDR_ANY;
-    direccion_servidor.sin_port = htons(5000);
-
-    //Asociar socket al puerto
-    int opt = 1;
-    if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        printf("setsockopt");
-        close(socket_servidor);
-        return 1;
+    else if (id[0] == 'B') {
+        ejecutarLayerB(number);
     }
-
-    if (bind(socket_servidor, (struct sockaddr *)&direccion_servidor, sizeof(direccion_servidor)) == -1) {
-        printf("Error en bind");
-        close(socket_servidor);
-        return 1;
+    else if (id[0] == 'C') {
+        ejecutarLayerC(number);
     }
-
-    //Escuchar
-    if (listen(socket_servidor, 1) == -1) {
-        printf("Error en listen");
-        close(socket_servidor);
-        return 0;
-    }
-    printf("Ejecutando Server Richard\n");
-
-    token = 1;
-    while(1){
-        while (token==0){
-            //Esperar token
-            tam_direccion_cliente = sizeof(direccion_cliente);
-
-            socket_cliente = accept(
-                socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente
-            );
-
-            if (socket_cliente == -1) {
-                continue;
-            }
-            int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
-
-            if (bytes_recibidos > 0) {
-                buffer[bytes_recibidos] = '\0';
-            }     
-            sscanf(buffer, "%d", &id);
-            if(id==4000){
-                token++;
-            }
-            close(socket_cliente);  
-
-        }  
-        int respuestas=0;
-        //avisar a todos los low que pueden escribir
-        for (int port=5001; port<5004; port++){
-            enviarMensaje(port,5000,1,1);
-        }
-        //esperar que todos los low terminen
-        while(respuestas<3){
-                tam_direccion_cliente = sizeof(direccion_cliente);
-
-                socket_cliente = accept(
-                    socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente //rcibir fin low
-                );
-
-                if (socket_cliente == -1) {
-                    continue;
-                }
-
-                int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
-
-                if (bytes_recibidos > 0) {
-                    buffer[bytes_recibidos] = '\0';
-                }
-
-                sscanf(buffer, "%d&", &id);
-                if(id>5000){
-                    respuestas++;
-                }
-                close(socket_cliente);  
-
-        }
-        token=0;
-        //enviar token de vuelta
-        enviarMensaje(8080,5000,1,1);
-        printf("RICHARD TOKEN SEND\n");
-    }
-    return 0;
-}
-
-int main() {
-    pthread_t threads[3];
-    int ids[3] = {5001, 5002, 5003};
-
-    for(int i = 0; i < 3; i++){
-        pthread_create(&threads[i], NULL, lowRichard, &ids[i]);
-    }
-
-    sleep(1);
-
-    server();
 
     return 0;
 }
