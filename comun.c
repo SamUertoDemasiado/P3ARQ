@@ -59,8 +59,12 @@ int esperarRespuesta(int socket_cliente) {
 
     if (bytes > 0) {
         buffer[bytes] = '\0';
-        if (sscanf(buffer, "%c&%d&%d",&solicitud, &campo, &valor) == 3 &&solicitud == 'A') {
+        sscanf(buffer, "%c&%d&%d",&solicitud, &campo, &valor);
+
+        if (solicitud == 'A') {
             return 1;
+        }else{
+            return 0;
         }
     }
     return 0;

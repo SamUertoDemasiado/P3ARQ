@@ -2,7 +2,7 @@
 #define SERVERS_H
 
 /*
-server-server: D&posicion_array&nuevo_valor, A&x&x (ack)
+server-server: D&posicion_array&nuevo_valor (actualizar valor), A&x&x (ack), S&x (espera, entrega con antelacion) 
 cliente-server: W&posicion_array&nuevo_valor, L&posicion_array&X, A&x&x (ack)
 server-cliente: R&valor_de_la_posicion&x, A&x&x (ack)
 

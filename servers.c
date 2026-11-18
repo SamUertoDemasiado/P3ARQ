@@ -26,6 +26,117 @@ typedef struct {
     pthread_mutex_t mutex;
 } Datos;
 
+typedef struct {
+    int info[100];
+    int Ta[3];
+    int id;
+    pthread_mutex_t mutex;
+} LA;
+
+int puedeEntregar(int Ta[3], int T[3]) {
+
+    int diferencias = 0;
+
+    for (int i = 0; i < 3; i++) {
+
+        if (T[i] == Ta[i] + 1) {
+            diferencias++;
+        }
+        else if (T[i] != Ta[i]) {
+            return 0;
+        }
+    }
+
+    return diferencias == 1;
+}
+
+//servidor layer A escucha mensajes D 
+void *fBSS(void *arg){
+    LA *datos = (LA *)arg;
+    int numero_socket_servidor=server_portA+((datos->id)*2)+1;
+    struct sockaddr_in direccion_servidor;
+    struct sockaddr_in direccion_cliente;
+    int socket_servidor;
+    int socket_cliente;
+    socklen_t tam_direccion_cliente;
+    char buffer[40];
+    //Crear socket
+    socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (socket_servidor == -1) {
+        printf("Error creando socket");
+        return NULL;
+    }
+
+    printf("Socket creado\n");
+    //Configurar la dirección del servidor
+    direccion_servidor.sin_family = AF_INET;
+    direccion_servidor.sin_addr.s_addr = INADDR_ANY;
+    direccion_servidor.sin_port = htons(numero_socket_servidor);
+
+    //Asociar socket al puerto
+    int opt=1;
+    if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
+        printf("setsockopt");
+        close(socket_servidor);
+        return NULL;
+    }
+
+    if (bind(socket_servidor, (struct sockaddr *)&direccion_servidor, sizeof(direccion_servidor)) == -1) {
+        printf("Error en bind");
+        close(socket_servidor);
+        return NULL;
+    }
+
+    //Escuchar
+    if (listen(socket_servidor, 1) == -1) {
+        printf("Error en listen");
+        close(socket_servidor);
+        return NULL;
+    }
+
+    char solicitud;
+    int Ta1, Ta2, Ta3, pos, val;
+    while(1){
+        tam_direccion_cliente = sizeof(direccion_cliente);
+
+        socket_cliente = accept(
+            socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente
+        );
+
+        if (socket_cliente == -1) {
+            continue;
+        }
+        int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
+
+        if (bytes_recibidos > 0) {
+            buffer[bytes_recibidos] = '\0';
+        }   
+
+        sscanf(buffer, "%c&%d&%d&%d&%d&%d", &solicitud,&Ta1, &Ta2, &Ta3, &pos, &val);
+        //escritura segun bfss
+        if (solicitud == 'D') {
+            pthread_mutex_lock(&datos->mutex);
+            int Tar[3];
+            Tar[0]=Ta1;
+            Tar[1]=Ta2;
+            Tar[2]=Ta3;
+            int valores = puedeEntregar(datos->Ta,Tar);
+
+            if(valores==1){
+                datos->Ta[0]=Tar[0];
+                datos->Ta[1]=Tar[1];
+                datos->Ta[2]=Tar[2];
+                datos->info[pos]=val;
+                responder('A', 0, 0, socket_cliente);
+            }else{
+                responder('S', 0, 0, socket_cliente);
+            }
+        pthread_mutex_unlock(&datos->mutex);
+        }
+        close(socket_cliente);
+    }
+}
 
 int conectarServidor(int puerto) {
 
@@ -50,36 +161,46 @@ int conectarServidor(int puerto) {
     return sock;
 }
 
-int actualizarOtroCore(int puerto, int campo, int valor) {
-
+int actualizarOtroCore(int puerto, int campo, int valor, int Ta[3]) {
+  while(1){
     int sock = conectarServidor(puerto);
 
     if (sock == -1) {
         return 0;
     }
-    while(1){
-        responder('D', campo, valor, sock);
-        if(esperarRespuesta(sock)){
-            break;
-        }
+
+  
+    char mensaje[40];
+    snprintf(mensaje,sizeof(mensaje),"%c&%d&%d&%d&%d&%d\n",'D',Ta[0], Ta[1], Ta[2], campo, valor);
+    send(sock, mensaje, strlen(mensaje), 0);
+
+    if(esperarRespuesta(sock)){
+            close(sock);
+        break;
+        
     }
-    close(sock);
+    usleep(100000);
+    
+}
     return  1;
 }
 
 void ejecutarCore(int id){
-    int version=0;
-    int numero_socket_servidor=server_portA+id;
+    int numero_socket_servidor=server_portA+((id)*2);
     int socket_servidor;
     int socket_cliente;
-    int info[100];
     int new_ver;
     struct sockaddr_in direccion_servidor;
     struct sockaddr_in direccion_cliente;
-    for(int i=0;i<100;i++){
-        info[i]=0;
+    LA datos = {0};
+    datos.id=id;
+    pthread_mutex_init(&datos.mutex, NULL);
+
+    if(numero_socket_servidor){
+        pthread_t BSS;
+
+        pthread_create(&BSS, NULL, fBSS, &datos);
     }
-    version=0;
     socklen_t tam_direccion_cliente;
     char buffer[40];
     //Crear socket
@@ -120,6 +241,7 @@ void ejecutarCore(int id){
     char solicitud;
     int campo;
     int valor;
+
     while(1){
         new_ver=0;
         tam_direccion_cliente = sizeof(direccion_cliente);
@@ -141,36 +263,37 @@ void ejecutarCore(int id){
         //piden lectura en servidor
         if (solicitud == 'L') {
             while (1) {
-                responder('R', info[campo], 0, socket_cliente);
+                responder('R', datos.info[campo], 0, socket_cliente);
                 if(esperarRespuesta(socket_cliente)){
                     break;
                 }
             }
         //piden escritura en servidor
         }else if (solicitud == 'W'){
+            pthread_mutex_lock(&datos.mutex);
             new_ver=1;
-            version++;
-            info[campo]=valor;
-            for (int port = 5001; port <= 5003; port++) {
-                if (port == numero_socket_servidor) {
+            datos.Ta[id-1]++;
+            datos.info[campo]=valor;
+
+            for (int port = 5001; port <= 5006; port+=2) {
+                if (port == numero_socket_servidor+1) {
                     continue;
                 }
-                actualizarOtroCore(port, campo, valor);
+                actualizarOtroCore(port, campo, valor, datos.Ta);
             }
             responder('A', 0, 0, socket_cliente);
-        }else if(solicitud == 'D'){
-            new_ver = 1;
-            version++; 
-            info[campo]=valor;  
-            responder('A', 0, 0, socket_cliente);
+            pthread_mutex_unlock(&datos.mutex);
         }
-        close(socket_cliente);  
+        close(socket_cliente);
         int puerto_conexion_lb;
         //se acaban de hacer 10 versiones
-        if((version%10)==0 && new_ver == 1){
-            if(numero_socket_servidor==5002){
+    /*
+        if(((datos.Ta[0]+datos.Ta[1]+datos.Ta[2])%10)==0 && new_ver == 1){
+            //A:5000+(id*2), 5000+(id*2)+1
+            //A: 5001,5002 - 5003,5004 - 5005,5006
+            if(numero_socket_servidor==5003){
                 puerto_conexion_lb=server_portB+1;
-            }else if(numero_socket_servidor==5003){
+            }else if(numero_socket_servidor==5005){
                 puerto_conexion_lb=server_portB+2;
             }else{
                 continue;
@@ -193,7 +316,7 @@ void ejecutarCore(int id){
             }
 
             for(int a =0; a<100; a++){
-                snprintf(mensaje,sizeof(mensaje),"%c&%d&%d\n",'D',a,info[a]);
+                snprintf(mensaje,sizeof(mensaje),"%c&%d&%d\n",'D',a,datos.info[a]);
                 send(sock, mensaje, strlen(mensaje), 0);
                 if(esperarRespuesta(sock)){
                     continue;
@@ -202,15 +325,15 @@ void ejecutarCore(int id){
                 }
             }
             do {
-                responder('V', 0, version, sock);
+                responder('V', 0, (datos.Ta[0]+datos.Ta[1]+datos.Ta[2]), sock);
             } while (!esperarRespuesta(sock));
-
-            close(sock);
             close(sock);
         }
+    }*/
+
     }
 }
-
+/*
 int enviarVersionLC(int puerto, int info[100], int version) {
 
     int sock = conectarServidor(puerto);
@@ -265,11 +388,8 @@ void ejecutarLayerB(int id){
     int socket_cliente;
     struct sockaddr_in direccion_servidor;
     struct sockaddr_in direccion_cliente;
-    Datos datos;
-    for(int i=0;i<100;i++){
-        datos.info[i]=0;
-    }
-    datos.version=0;
+    Datos datos = {0};
+
     pthread_mutex_init(&datos.mutex, NULL);
 
     if(numero_socket_servidor==5102){
@@ -370,3 +490,4 @@ void ejecutarLayerB(int id){
     }
 }
 
+*/
