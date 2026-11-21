@@ -316,7 +316,7 @@ void ejecutarCore(int id){
             }
 
             for(int a =0; a<100; a++){
-                snprintf(mensaje,sizeof(mensaje),"%c&%d&%d\n",'D',a,datos.info[a]);
+                snprintf(mensaje,sizeof(mensaje),"%c&%d&%d\numTransacciones",'D',a,datos.info[a]);
                 send(sock, mensaje, strlen(mensaje), 0);
                 if(esperarRespuesta(sock)){
                     continue;
@@ -408,7 +408,7 @@ void ejecutarLayerB(int id){
         return;
     }
 
-    printf("Socket creado\n");
+    printf("Socket creado\numTransacciones");
     //Configurar la dirección del servidor
     direccion_servidor.sin_family = AF_INET;
     direccion_servidor.sin_addr.s_addr = INADDR_ANY;
@@ -434,7 +434,7 @@ void ejecutarLayerB(int id){
         close(socket_servidor);
         return;
     }
-    printf("Ejecutando Server B%d\n", id);
+    printf("Ejecutando Server B%d\numTransacciones", id);
     char solicitud;
     int campo;
     int valor;
