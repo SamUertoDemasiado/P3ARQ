@@ -29,7 +29,6 @@ typedef struct {
 } ListaTransacciones;
 
 int leerTransacciones(char *ruta, ListaTransacciones *lista);
-
 void liberarTransacciones(ListaTransacciones *lista);
 
 #endif

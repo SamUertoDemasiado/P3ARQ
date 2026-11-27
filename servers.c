@@ -1,493 +1,375 @@
 #include "servers.h"
 #include "comun.h"
+
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
-#include <errno.h>
 #include <unistd.h>
-#ifdef __linux__
+#include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <pthread.h>
-#include <unistd.h>
-#endif
-
-#define server_portA 5000
-#define server_portB 5100
-#define server_portC 5200
-#define port_Client 5300
-
 
 typedef struct {
-    int info[100];
+    int info[N_CELDAS];
     int version;
-    pthread_mutex_t mutex;
-} Datos;
-
-typedef struct {
-    int info[100];
     int Ta[3];
     int id;
     pthread_mutex_t mutex;
-} LA;
+} Capa;
 
-int puedeEntregar(int Ta[3], int T[3]) {
-
+int puedeEntregar(int local[3], int mensaje[3]) {
     int diferencias = 0;
 
     for (int i = 0; i < 3; i++) {
-
-        if (T[i] == Ta[i] + 1) {
+        if (mensaje[i] == local[i] + 1) {
             diferencias++;
-        }
-        else if (T[i] != Ta[i]) {
+        } else if (mensaje[i] != local[i]) {
             return 0;
         }
     }
-
     return diferencias == 1;
 }
 
-//servidor layer A escucha mensajes D 
-void *fBSS(void *arg){
-    LA *datos = (LA *)arg;
-    int numero_socket_servidor=server_portA+((datos->id)*2)+1;
-    struct sockaddr_in direccion_servidor;
-    struct sockaddr_in direccion_cliente;
-    int socket_servidor;
-    int socket_cliente;
-    socklen_t tam_direccion_cliente;
-    char buffer[40];
-    //Crear socket
-    socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (socket_servidor == -1) {
-        printf("Error creando socket");
-        return NULL;
-    }
-
-    printf("Socket creado\n");
-    //Configurar la dirección del servidor
-    direccion_servidor.sin_family = AF_INET;
-    direccion_servidor.sin_addr.s_addr = INADDR_ANY;
-    direccion_servidor.sin_port = htons(numero_socket_servidor);
-
-    //Asociar socket al puerto
-    int opt=1;
-    if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        printf("setsockopt");
-        close(socket_servidor);
-        return NULL;
-    }
-
-    if (bind(socket_servidor, (struct sockaddr *)&direccion_servidor, sizeof(direccion_servidor)) == -1) {
-        printf("Error en bind");
-        close(socket_servidor);
-        return NULL;
-    }
-
-    //Escuchar
-    if (listen(socket_servidor, 1) == -1) {
-        printf("Error en listen");
-        close(socket_servidor);
-        return NULL;
-    }
-
-    char solicitud;
-    int Ta1, Ta2, Ta3, pos, val;
-    while(1){
-        tam_direccion_cliente = sizeof(direccion_cliente);
-
-        socket_cliente = accept(
-            socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente
-        );
-
-        if (socket_cliente == -1) {
-            continue;
-        }
-        int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
-
-        if (bytes_recibidos > 0) {
-            buffer[bytes_recibidos] = '\0';
-        }   
-
-        sscanf(buffer, "%c&%d&%d&%d&%d&%d", &solicitud,&Ta1, &Ta2, &Ta3, &pos, &val);
-        //escritura segun bfss
-        if (solicitud == 'D') {
-            pthread_mutex_lock(&datos->mutex);
-            int Tar[3];
-            Tar[0]=Ta1;
-            Tar[1]=Ta2;
-            Tar[2]=Ta3;
-            int valores = puedeEntregar(datos->Ta,Tar);
-
-            if(valores==1){
-                datos->Ta[0]=Tar[0];
-                datos->Ta[1]=Tar[1];
-                datos->Ta[2]=Tar[2];
-                datos->info[pos]=val;
-                responder('A', 0, 0, socket_cliente);
-            }else{
-                responder('S', 0, 0, socket_cliente);
-            }
-        pthread_mutex_unlock(&datos->mutex);
-        }
-        close(socket_cliente);
-    }
-}
-
-int conectarServidor(int puerto) {
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (sock == -1) {
-        return -1;
-    }
-
-    struct sockaddr_in direccion;
-    direccion.sin_family = AF_INET;
-    direccion.sin_port = htons(puerto);
-
-    inet_pton(AF_INET, "127.0.0.1", &direccion.sin_addr);
-
-    if (connect(sock, (struct sockaddr *)&direccion,
-                sizeof(direccion)) == -1) {
-        close(sock);
-        return -1;
-    }
-
-    return sock;
-}
-
-int actualizarOtroCore(int puerto, int campo, int valor, int Ta[3]) {
-  while(1){
-    int sock = conectarServidor(puerto);
-
-    if (sock == -1) {
-        return 0;
-    }
-
-  
-    char mensaje[40];
-    snprintf(mensaje,sizeof(mensaje),"%c&%d&%d&%d&%d&%d\n",'D',Ta[0], Ta[1], Ta[2], campo, valor);
-    send(sock, mensaje, strlen(mensaje), 0);
-
-    if(esperarRespuesta(sock)){
-            close(sock);
-        break;
-        
-    }
-    usleep(100000);
-    
-}
-    return  1;
-}
-
-void ejecutarCore(int id){
-    int numero_socket_servidor=server_portA+((id)*2);
-    int socket_servidor;
-    int socket_cliente;
-    int new_ver;
-    struct sockaddr_in direccion_servidor;
-    struct sockaddr_in direccion_cliente;
-    LA datos = {0};
-    datos.id=id;
-    pthread_mutex_init(&datos.mutex, NULL);
-
-    if(numero_socket_servidor){
-        pthread_t BSS;
-
-        pthread_create(&BSS, NULL, fBSS, &datos);
-    }
-    socklen_t tam_direccion_cliente;
-    char buffer[40];
-    //Crear socket
-    socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (socket_servidor == -1) {
-        printf("Error creando socket");
-        return;
-    }
-
-    printf("Socket creado\n");
-    //Configurar la dirección del servidor
-    direccion_servidor.sin_family = AF_INET;
-    direccion_servidor.sin_addr.s_addr = INADDR_ANY;
-    direccion_servidor.sin_port = htons(numero_socket_servidor);
-
-    //Asociar socket al puerto
-    int opt=1;
-    if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        printf("setsockopt");
-        close(socket_servidor);
-        return;
-    }
-
-    if (bind(socket_servidor, (struct sockaddr *)&direccion_servidor, sizeof(direccion_servidor)) == -1) {
-        printf("Error en bind");
-        close(socket_servidor);
-        return;
-    }
-
-    //Escuchar
-    if (listen(socket_servidor, 1) == -1) {
-        printf("Error en listen");
-        close(socket_servidor);
-        return;
-    }
-    printf("Ejecutando Server A%d\n", id);
-    char solicitud;
-    int campo;
-    int valor;
-
-    while(1){
-        new_ver=0;
-        tam_direccion_cliente = sizeof(direccion_cliente);
-
-        socket_cliente = accept(
-            socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente
-        );
-
-        if (socket_cliente == -1) {
-            continue;
-        }
-        int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
-
-        if (bytes_recibidos > 0) {
-            buffer[bytes_recibidos] = '\0';
-        }     
-
-        sscanf(buffer, "%c&%d&%d", &solicitud, &campo, &valor);
-        //piden lectura en servidor
-        if (solicitud == 'L') {
-            while (1) {
-                responder('R', datos.info[campo], 0, socket_cliente);
-                if(esperarRespuesta(socket_cliente)){
-                    break;
-                }
-            }
-        //piden escritura en servidor
-        }else if (solicitud == 'W'){
-            pthread_mutex_lock(&datos.mutex);
-            new_ver=1;
-            datos.Ta[id-1]++;
-            datos.info[campo]=valor;
-
-            for (int port = 5001; port <= 5006; port+=2) {
-                if (port == numero_socket_servidor+1) {
-                    continue;
-                }
-                actualizarOtroCore(port, campo, valor, datos.Ta);
-            }
-            responder('A', 0, 0, socket_cliente);
-            pthread_mutex_unlock(&datos.mutex);
-        }
-        close(socket_cliente);
-        int puerto_conexion_lb;
-        //se acaban de hacer 10 versiones
-    /*
-        if(((datos.Ta[0]+datos.Ta[1]+datos.Ta[2])%10)==0 && new_ver == 1){
-            //A:5000+(id*2), 5000+(id*2)+1
-            //A: 5001,5002 - 5003,5004 - 5005,5006
-            if(numero_socket_servidor==5003){
-                puerto_conexion_lb=server_portB+1;
-            }else if(numero_socket_servidor==5005){
-                puerto_conexion_lb=server_portB+2;
-            }else{
-                continue;
-            }
-            //conexion con su respectivo server de layer b y actualicacion
-            int sock;
-            struct sockaddr_in direccion;
-            char mensaje[40];
-            sock = socket(AF_INET, SOCK_STREAM, 0);
-            if (sock == -1) {
-                printf("socket");
-                return ;
-            }
-            direccion.sin_family = AF_INET;
-            direccion.sin_port = htons(puerto_conexion_lb);
-            inet_pton(AF_INET, "127.0.0.1", &direccion.sin_addr);
-            if (connect(sock,(struct sockaddr *)&direccion,sizeof(direccion)) == -1) {
-                close(sock);
-                return ;
-            }
-
-            for(int a =0; a<100; a++){
-                snprintf(mensaje,sizeof(mensaje),"%c&%d&%d\n",'D',a,datos.info[a]);
-                send(sock, mensaje, strlen(mensaje), 0);
-                if(esperarRespuesta(sock)){
-                    continue;
-                }else{
-                    a--;
-                }
-            }
-            do {
-                responder('V', 0, (datos.Ta[0]+datos.Ta[1]+datos.Ta[2]), sock);
-            } while (!esperarRespuesta(sock));
-            close(sock);
-        }
-    }*/
-
-    }
-}
-/*
-int enviarVersionLC(int puerto, int info[100], int version) {
-
-    int sock = conectarServidor(puerto);
-
-    if (sock == -1) {
-        return 0;
-    }
-    while(1){
-    responder('V', 0, version, sock);
-
-    if (esperarRespuesta(sock) != 1) {
-    }else{
-        break;
-    }
-    }
-
-
-    for (int a = 0; a < 100; a++) {
-
-        responder('D', a, info[a], sock);
-
-        if (esperarRespuesta(sock) != 1) {
-            a--;
+int yaEntregado(int local[3], int mensaje[3]) {
+    for(int i = 0; i < 3; i++) {
+        if (mensaje[i] > local[i]) {
+            return 0;
         }
     }
-
-    close(sock);
     return 1;
 }
 
-void *actualizarC(void *arg) {
+int abrirServidor(int puerto) {
+    struct sockaddr_in direccion;
+    int servidor = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
 
-    Datos *datos = (Datos *)arg;
-    while (1) {
-        sleep(10);
-        int copia[100];
-        int version_copia;
-        pthread_mutex_lock(&datos->mutex);
-        memcpy(copia, datos->info, sizeof(copia));
-        version_copia = datos->version;
-        pthread_mutex_unlock(&datos->mutex);
-        enviarVersionLC(5201, copia, version_copia);
-        enviarVersionLC(5202, copia, version_copia);
-    }
-    return NULL;
+    setsockopt(servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    memset(&direccion, 0, sizeof(direccion));
+
+    direccion.sin_family = AF_INET;
+    direccion.sin_addr.s_addr = INADDR_ANY;
+    direccion.sin_port = htons(puerto);
+    bind(servidor, (struct sockaddr *)&direccion, sizeof(direccion));
+    listen(servidor, 8);
+    return servidor;
 }
 
+void guardarEscritura(int id, int version, int pos, int valor, int Ta[3]) {
+    char nombre[32];
+    FILE *fichero;
 
-void ejecutarLayerB(int id){
-    int numero_socket_servidor=server_portB+id;
-    int socket_servidor;
-    int socket_cliente;
-    struct sockaddr_in direccion_servidor;
-    struct sockaddr_in direccion_cliente;
-    Datos datos = {0};
+    snprintf(nombre, sizeof(nombre), "logA%d.txt", id);
+    fichero = fopen(nombre, "a");
+    fprintf(fichero,"Versión %d:\n\tÚltima celda actualizada %d con valor %d\n\tEscrituras por nodo - Nodo 1: %d Nodo 2: %d Nodo 3: %d\n", version, pos, valor, Ta[0], Ta[1], Ta[2]);
+    fclose(fichero);
+}
 
+void guardarSnapshot(char capa, int id, int version, int info[N_CELDAS]) {
+    char nombre[32];
+    FILE *fichero;
+
+    snprintf (nombre, sizeof(nombre), "log%c%d.txt", capa, id);
+    fichero = fopen(nombre, "a");
+    fprintf(fichero, "Historial de versión %d:\n\t[", version);
+    for (int i = 0; i < N_CELDAS; i++) {
+        fprintf(fichero, " %d", info[i]);
+    }
+    fprintf(fichero, "]\n");
+    fclose(fichero);
+}
+
+void anunciarMonitor(char capa, int id, int version, int pos, int valor) {
+    char mensaje[120];
+    int sock;
+
+    snprintf(mensaje, sizeof(mensaje), "{\"nodo\":\"%c%d\",\"version\":%d,\"pos\":%d,\"valor\":%d}\n", capa, id, version, pos, valor);
+    sock=conectarServidor(8090);
+    send(sock, mensaje, strlen(mensaje), 0);
+    close(sock);
+}
+
+void actualizarOtroCore(int puerto, int campo, int valor, int Ta[3]) {
+    char mensaje[80];
+
+    snprintf(mensaje, sizeof(mensaje), "D&%d&%d&%d&%d&%d\n", Ta[0], Ta[1], Ta[2], campo, valor);
+    while (1) {
+        int sock = conectarServidor(puerto);
+        send(sock, mensaje, strlen(mensaje), 0);
+        if (esperarAck(sock) == 1) {
+            close(sock);
+            return;
+        }
+        close(sock);
+        usleep(100000);
+    }
+}
+
+void enviarSnapshot(int puerto, int info[N_CELDAS], int version) {
+    int sock = conectarServidor(puerto);
+
+    for (int i = 0; i < N_CELDAS; i++) {
+        responder('D', i, info[i], sock);
+        if (esperarAck(sock) != 1) {
+            i--;
+        }
+    }
+    responder('V', 0, version, sock);
+    while (esperarAck(sock) != 1) {
+        usleep(100000);
+    }
+    close(sock);
+}
+
+void enviarHaciaB(int id, int info[N_CELDAS], int version) {
+    int puerto;
+
+    if (version == 0 || version % 10 != 0) {
+        return;
+    }
+    if (id == 2) {
+        puerto = puertoNodoB(1);
+        printf("Nodo A%d envia la version %d a B1\n",id,version);
+    } else if (id == 3) {
+        puerto = puertoNodoB(2);
+        printf("Nodo A%d envia la version %d a B2\n",id,version);
+    }
+    else {
+        return;
+    }
+    enviarSnapshot(puerto, info, version);
+}
+
+void *fBSS(void *arg) {
+    Capa *datos = (Capa*)arg;
+    int servidor = abrirServidor(puertoBssA(datos->id));
+
+    while (1) {
+        struct sockaddr_in dir;
+        char solicitud;
+        char linea[80];
+        int vector[3];
+        int copia[N_CELDAS];
+        int t0, t1, t2, pos, val;
+        int version = 0, entregar = 0, duplicado = 0;
+
+        socklen_t tam = sizeof(dir);
+        int cliente = accept(servidor, (struct sockaddr *)&dir, &tam);
+
+        recibirLinea(cliente, linea, sizeof(linea));
+        sscanf(linea, "%c&%d&%d&%d&%d&%d", &solicitud, &t0, &t1, &t2, &pos, &val);
+        vector[0] = t0;
+        vector[1] = t1;
+        vector[2] = t2;
+
+        pthread_mutex_lock(&datos->mutex);
+        if (yaEntregado(datos->Ta, vector)) {
+            duplicado = 1;
+        } else if (puedeEntregar(datos->Ta, vector)) {
+            datos->Ta[0] = vector[0];
+            datos->Ta[1] = vector[1];
+            datos->Ta[2] = vector[2];
+            if (indiceValido(pos)) {
+                datos->info[pos] = val;
+            }
+            version = datos->Ta[0] + datos->Ta[1] + datos->Ta[2];
+            memcpy(copia, datos->info, sizeof(copia));
+            entregar = 1;
+        }
+        pthread_mutex_unlock(&datos->mutex);
+
+        if (duplicado || entregar) {
+            responder('A', 0, 0, cliente);
+        } else {
+            responder('S', 0, 0, cliente);
+        }
+        close(cliente);
+
+        if (entregar) {
+            guardarEscritura(datos->id, version, pos, val, vector);
+            anunciarMonitor('A', datos->id, version, pos, val);
+            enviarHaciaB(datos->id, copia, version);
+        }
+    }
+}
+
+void ejecutarCore(int id) {
+    Capa datos = {0};
+    pthread_t hilo;
+    int servidor;
+
+    signal(SIGPIPE, SIG_IGN);
+    datos.id = id;
     pthread_mutex_init(&datos.mutex, NULL);
+    pthread_create(&hilo, NULL, fBSS, &datos);
+    anunciarMonitor('A', id, 0, -1, 0);
 
-    if(numero_socket_servidor==5102){
-        pthread_t hilo_actualizacion;
+    servidor = abrirServidor(puertoNodoA(id));
+    printf("Ejecutando Server A%d \n", id);
 
-        pthread_create(&hilo_actualizacion, NULL, actualizarC, &datos);
-    }
+    while (1) {
+        struct sockaddr_in dir;
+        socklen_t tam = sizeof(dir);
+        char linea[80];
+        char solicitud;
+        int campo, valor;
+        int cliente = accept(servidor, (struct sockaddr *)&dir, &tam);
 
-    socklen_t tam_direccion_cliente;
-    char buffer[40];
-    //Crear socket
-    socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
-
-    if (socket_servidor == -1) {
-        printf("Error creando socket");
-        return;
-    }
-
-    printf("Socket creado\n");
-    //Configurar la dirección del servidor
-    direccion_servidor.sin_family = AF_INET;
-    direccion_servidor.sin_addr.s_addr = INADDR_ANY;
-    direccion_servidor.sin_port = htons(numero_socket_servidor);
-
-    //Asociar socket al puerto
-    int opt=1;
-    if (setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1) {
-        printf("setsockopt");
-        close(socket_servidor);
-        return;
-    }
-
-    if (bind(socket_servidor, (struct sockaddr *)&direccion_servidor, sizeof(direccion_servidor)) == -1) {
-        printf("Error en bind");
-        close(socket_servidor);
-        return;
-    }
-
-    //Escuchar
-    if (listen(socket_servidor, 1) == -1) {
-        printf("Error en listen");
-        close(socket_servidor);
-        return;
-    }
-    printf("Ejecutando Server B%d\n", id);
-    char solicitud;
-    int campo;
-    int valor;
-    while(1){
-        tam_direccion_cliente = sizeof(direccion_cliente);
-
-        socket_cliente = accept(
-            socket_servidor,(struct sockaddr *)&direccion_cliente,&tam_direccion_cliente
-        );
-
-        if (socket_cliente == -1) {
+        recibirLinea(cliente, linea, sizeof(linea));
+        sscanf(linea, "%c&%d&%d", &solicitud, &campo, &valor);
+        if ((solicitud == 'L' || solicitud == 'W') && !indiceValido(campo)) {
+            printf("A%d rechaza la celda %d\n", id, campo);
+            close(cliente);
             continue;
         }
-        int bytes_recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
 
-        if (bytes_recibidos > 0) {
-            buffer[bytes_recibidos] = '\0';
-        }     
-
-        sscanf(buffer, "%c&%d&%d", &solicitud, &campo, &valor);
-        //piden lectura en servidor
         if (solicitud == 'L') {
-            while (1) {
-                responder('R', datos.info[campo], 0, socket_cliente);
-                if(esperarRespuesta(socket_cliente)){
-                    break;
-                }
-            }
-        //actualizar version
-        }else if (solicitud == 'D') {
+            int valorLeido;
+
             pthread_mutex_lock(&datos.mutex);
-            while (1) {
-                if (solicitud == 'D') {
-                    datos.info[campo] = valor;
-                    responder('A', 0, 0, socket_cliente);
-                } else if (solicitud == 'V') {
-                    datos.version = valor;
-                    responder('A', 0, 0, socket_cliente);
-                    break;
-                } else {
-                    break;
+            valorLeido = datos.info[campo];
+            pthread_mutex_unlock(&datos.mutex);
+            responder('R', valorLeido, 0, cliente);
+            esperarAck(cliente);
+        } else if (solicitud == 'W') {
+            int vector[3];
+            int copia[N_CELDAS];
+            int version;
+
+            pthread_mutex_lock(&datos.mutex);
+            datos.Ta[id - 1]++;
+            datos.info[campo] = valor;
+            version = datos.Ta[0] + datos.Ta[1] + datos.Ta[2];
+            memcpy(vector, datos.Ta, sizeof(vector));
+            memcpy(copia, datos.info, sizeof(copia));
+            pthread_mutex_unlock(&datos.mutex);
+
+            for (int otro = 1; otro <= 3; otro++) {
+                if (otro != id) {
+                    actualizarOtroCore(puertoBssA(otro), campo, valor, vector);
                 }
-                ssize_t recibidos = recv(socket_cliente, buffer, sizeof(buffer) - 1, 0);
-                if (recibidos <= 0) {
-                    break;
-                }
-                buffer[recibidos] = '\0';
-                sscanf(buffer, "%c&%d&%d",&solicitud, &campo, &valor);
             }
-        pthread_mutex_unlock(&datos.mutex);
+
+            guardarEscritura(id, version, campo, valor, vector);
+            printf("Nueva version nodo A%d: version %d\n\tCelda %d Valor %d\n", id, version, campo, valor);
+            responder('A', 0, 0, cliente);
+            anunciarMonitor('A', id, version, campo, valor);
+            enviarHaciaB(id, copia, version);
         }
-    close(socket_cliente);  
+        close(cliente);
     }
 }
 
-*/
+void atenderConexion(Capa *datos, int socket_cliente, char capa, int id) {
+    char linea[80];
+    char solicitud;
+    int campo, valor;
+    int temp[N_CELDAS];
+    int versionRecibida;
+
+    recibirLinea(socket_cliente, linea, sizeof(linea));
+    sscanf(linea, "%c&%d&%d", &solicitud, &campo, &valor);
+
+    if (solicitud == 'L') {
+        int valorLeido;
+
+        if (!indiceValido(campo)) {
+            printf("%c%d rechaza la celda %d\n", capa, id, campo);
+            return;
+        }
+        pthread_mutex_lock(&datos->mutex);
+        valorLeido = datos->info[campo];
+        pthread_mutex_unlock(&datos->mutex);
+        responder('R', valorLeido, 0, socket_cliente);
+        esperarAck(socket_cliente);
+        return;
+    }
+
+    pthread_mutex_lock(&datos->mutex);
+    memcpy(temp, datos->info, sizeof(temp));
+    pthread_mutex_unlock(&datos->mutex);
+
+    while (solicitud == 'D') {
+        if (indiceValido(campo)) {
+            temp[campo] = valor;
+        }
+        responder('A', 0, 0, socket_cliente);
+        recibirLinea(socket_cliente, linea, sizeof(linea));
+        sscanf(linea, "%c&%d&%d", &solicitud, &campo, &valor);
+    }
+
+    versionRecibida = valor;
+    responder('A', 0, 0, socket_cliente);
+
+    pthread_mutex_lock(&datos->mutex);
+    if (versionRecibida == datos->version) {
+        pthread_mutex_unlock(&datos->mutex);
+        return;
+    }
+    memcpy(datos->info, temp, sizeof(temp));
+    datos->version = versionRecibida;
+    pthread_mutex_unlock(&datos->mutex);
+
+    guardarSnapshot(capa, id, versionRecibida, temp);
+    printf("%c%d instala la version %d\n", capa, id, versionRecibida);
+    anunciarMonitor(capa, id, versionRecibida, -1, 0);
+}
+
+void *actualizarC(void *arg) {
+    Capa *datos = (Capa *)arg;
+
+    while (1) {
+        int copia[N_CELDAS];
+        int version;
+
+        sleep(10);
+        pthread_mutex_lock(&datos->mutex);
+        memcpy(copia, datos->info, sizeof(copia));
+        version = datos->version;
+        pthread_mutex_unlock(&datos->mutex);
+        if (version == 0) {
+            continue;
+        }
+        enviarSnapshot(puertoNodoC(1), copia, version);
+        enviarSnapshot(puertoNodoC(2), copia, version);
+        printf("B2 envia la version %d a C1 y C2\n", version);
+    }
+}
+
+void ejecutarCapa(char capa, int id) {
+    Capa datos;
+    int puerto, servidor;
+
+    signal(SIGPIPE, SIG_IGN);
+    pthread_mutex_init(&datos.mutex, NULL);
+    if (capa == 'B'){
+        puerto = puertoNodoB(id);
+    }
+    else {
+        puerto = puertoNodoC(id);
+    }
+    servidor = abrirServidor(puerto);
+    printf("Ejecutando Server %c%d\n", capa, id);
+    anunciarMonitor(capa, id, 0, -1, 0);
+    if (capa == 'B' && id == 2) {
+        pthread_t hilo;
+        pthread_create(&hilo, NULL, actualizarC, &datos);
+    }
+
+    while (1) {
+        struct sockaddr_in dir;
+        socklen_t tam = sizeof(dir);
+        int cliente = accept(servidor, (struct sockaddr*)&dir, &tam);
+        atenderConexion(&datos, cliente, capa, id);
+        close(cliente);
+    }
+}
+
+void ejecutarLayerB(int id) {
+    ejecutarCapa('B', id);
+}
+
+void ejecutarLayerC(int id) {
+    ejecutarCapa('C', id);
+}
