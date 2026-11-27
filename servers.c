@@ -338,7 +338,7 @@ void *actualizarC(void *arg) {
 }
 
 void ejecutarCapa(char capa, int id) {
-    Capa datos;
+    Capa datos = {0};
     int puerto, servidor;
 
     signal(SIGPIPE, SIG_IGN);
