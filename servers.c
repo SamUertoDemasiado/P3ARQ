@@ -80,7 +80,7 @@ void guardarSnapshot(char capa, int id, int version, int info[N_CELDAS]) {
     fclose(fichero);
 }
 
-void anunciarMonitor(char capa, int id, int version, int pos, int valor) {
+void anunciarPython(char capa, int id, int version, int pos, int valor) {
     char mensaje[120];
     int sock;
 
@@ -188,7 +188,7 @@ void *fBSS(void *arg) {
 
         if (entregar) {
             guardarEscritura(datos->id, version, pos, val, vector);
-            anunciarMonitor('A', datos->id, version, pos, val);
+            anunciarPython('A', datos->id, version, pos, val);
             enviarHaciaB(datos->id, copia, version);
         }
     }
@@ -203,7 +203,7 @@ void ejecutarCore(int id) {
     datos.id = id;
     pthread_mutex_init(&datos.mutex, NULL);
     pthread_create(&hilo, NULL, fBSS, &datos);
-    anunciarMonitor('A', id, 0, -1, 0);
+    anunciarPython('A', id, 0, -1, 0);
 
     servidor = abrirServidor(puertoNodoA(id));
     printf("Ejecutando Server A%d \n", id);
@@ -254,7 +254,7 @@ void ejecutarCore(int id) {
             guardarEscritura(id, version, campo, valor, vector);
             printf("Nueva version nodo A%d: version %d\n\tCelda %d Valor %d\n", id, version, campo, valor);
             responder('A', 0, 0, cliente);
-            anunciarMonitor('A', id, version, campo, valor);
+            anunciarPython('A', id, version, campo, valor);
             enviarHaciaB(id, copia, version);
         }
         close(cliente);
@@ -313,7 +313,7 @@ void atenderConexion(Capa *datos, int socket_cliente, char capa, int id) {
 
     guardarSnapshot(capa, id, versionRecibida, temp);
     printf("%c%d instala la version %d\n", capa, id, versionRecibida);
-    anunciarMonitor(capa, id, versionRecibida, -1, 0);
+    anunciarPython(capa, id, versionRecibida, -1, 0);
 }
 
 void *actualizarC(void *arg) {
@@ -351,7 +351,7 @@ void ejecutarCapa(char capa, int id) {
     }
     servidor = abrirServidor(puerto);
     printf("Ejecutando Server %c%d\n", capa, id);
-    anunciarMonitor(capa, id, 0, -1, 0);
+    anunciarPython(capa, id, 0, -1, 0);
     if (capa == 'B' && id == 2) {
         pthread_t hilo;
         pthread_create(&hilo, NULL, actualizarC, &datos);
