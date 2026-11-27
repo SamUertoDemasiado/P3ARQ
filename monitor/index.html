@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Replicas</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; background: #121212; color: #f2f2f2; }
+    header { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 24px; border-bottom: 1px solid #2c2c2c; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0; }
+    #enlace { font-size: 14px; }
+    #enlace.ok { color: #8fd48a; }
+    #enlace.no { color: #f0a090; }
+    main { padding: 16px 24px 32px; display: grid; gap: 16px; }
+    section h2 { font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 8px; color: #d4d4d4; }
+    .fila { display: grid; gap: 12px; }
+    .core { grid-template-columns: repeat(3, 1fr); }
+    .par { grid-template-columns: repeat(2, 1fr); }
+    article { background: #1c1c1c; border: 1px solid #333; border-radius: 8px; padding: 12px; }
+    article.detras { border-color: #8a6a32; }
+    .cabecera { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    .nombre { font-weight: 650; }
+    .version { font-variant-numeric: tabular-nums; }
+    .meta { min-height: 18px; font-size: 14px; color: #f2f2f2; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Replicas en tiempo real</h1>
+  <div id="enlace" class="no">desconectado</div>
+</header>
+<main>
+  <section>
+    <h2>Capa A, version mas reciente</h2>
+    <div class="fila core" id="capa-a"></div>
+  </section>
+  <section>
+    <h2>Capa B, cada 10 escrituras</h2>
+    <div class="fila par" id="capa-b"></div>
+  </section>
+  <section>
+    <h2>Capa C, cada 10 segundos desde B2</h2>
+    <div class="fila par" id="capa-c"></div>
+  </section>
+</main>
+<script>
+  const ORDEN = ["A1", "A2", "A3", "B1", "B2", "C1", "C2"];
+  const nodos = {};
+  ORDEN.forEach(function (nombre) {
+    nodos[nombre] = { version: null, pos: null, valor: null };
+  });
+  function hueco(nombre) {
+    if (nombre[0] === "A") return document.getElementById("capa-a");
+    if (nombre[0] === "B") return document.getElementById("capa-b");
+    return document.getElementById("capa-c");
+  }
+  ORDEN.forEach(function (nombre) {
+    const article = document.createElement("article");
+    article.id = "nodo-" + nombre;
+    article.innerHTML = '<div class="cabecera"><span class="nombre"></span><span class="version"></span></div>' + '<div class="meta"></div>';
+    article.querySelector(".nombre").textContent = nombre;
+    hueco(nombre).appendChild(article);
+  });
+  function versionMaximaA() {
+    let maxima = null;
+    ["A1", "A2", "A3"].forEach(function (nombre) {
+      const version = nodos[nombre].version;
+      if (typeof version === "number" && (maxima === null || version > maxima)) {
+        maxima = version;
+      }
+    });
+    return maxima;
+  }
+  function pintar(nombre) {
+    const ficha = nodos[nombre];
+    const article = document.getElementById("nodo-" + nombre);
+    const version = article.querySelector(".version");
+    const meta = article.querySelector(".meta");
+    const maxima = versionMaximaA();
+    version.textContent = ficha.version === null ? "sin datos" : "version " + ficha.version;
+    if (ficha.pos !== null && ficha.pos >= 0) {
+      meta.textContent = "ultima actualizacion: celda " + ficha.pos + " = " + ficha.valor;
+    } else if (typeof ficha.version === "number" && ficha.version > 0) {
+      const origen = nombre === "B1" ? "A2" : nombre === "B2" ? "A3" : "B2";
+      meta.textContent = "ultima actualizacion: recibida desde " + origen;
+    } else {
+      meta.textContent = "sin actualizacion";
+    }
+    article.classList.toggle("detras", maxima !== null && typeof ficha.version === "number" && ficha.version < maxima);
+  }
+  function guardar(nombre, ficha) {
+    if (!nodos[nombre]) return;
+    nodos[nombre].version = ficha.version;
+    nodos[nombre].pos = ficha.pos;
+    nodos[nombre].valor = ficha.valor;
+    ORDEN.forEach(pintar);
+  }
+  ORDEN.forEach(pintar);
+  const enlace = document.getElementById("enlace");
+  const socket = new WebSocket("ws://" + location.host + "/ws");
+  socket.addEventListener("open", function () {
+    enlace.textContent = "conectado";
+    enlace.className = "ok";
+  });
+  socket.addEventListener("close", function () {
+    enlace.textContent = "desconectado";
+    enlace.className = "no";
+  });
+  socket.addEventListener("message", function (evento) {
+    const mensaje = JSON.parse(evento.data);
+    if (mensaje.tipo === "estado") {
+      ORDEN.forEach(function (nombre) {
+        if (mensaje.nodos[nombre]) guardar(nombre, mensaje.nodos[nombre]);
+      });
+    } else if (mensaje.tipo === "actualizacion") {
+      guardar(mensaje.nodo, mensaje);
+    }
+  });
+</script>
+</body>
+</html>
