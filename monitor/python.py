@@ -91,7 +91,7 @@ def aceptar_websocket(conn, clave):
 
 
 def servir_pagina(conn):
-    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagina.html")
     fichero = open(ruta, "rb")
     cuerpo = fichero.read()
     fichero.close()
